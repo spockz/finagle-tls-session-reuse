@@ -5,18 +5,19 @@ import java.net.InetSocketAddress
 import java.security.KeyStore
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 
-import scala.collection.concurrent.TrieMap
 import com.twitter.finagle
 import com.twitter.finagle.Http.Client
 import com.twitter.finagle.http.{Request, Response, Status}
 import com.twitter.finagle.netty4.ssl.client.Netty4ClientEngineFactory
 import com.twitter.finagle.ssl._
-import com.twitter.finagle.ssl.client.{SslClientConfiguration, SslClientEngineFactory, SslClientSessionVerifier}
+import com.twitter.finagle.ssl.client.{SslClientConfiguration, SslClientEngineFactory, SslClientSessionVerifier, SslContextClientEngineFactory}
 import com.twitter.finagle.{Address, Http, ListeningServer, Service}
 import com.twitter.util.{Await, Duration, Future, Return}
 import javax.net.ssl.{KeyManagerFactory, SSLContext, SSLSession, TrustManagerFactory}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+
+import scala.collection.concurrent.TrieMap
 
 class TlsTest extends AnyFlatSpec with Matchers {
 
@@ -34,8 +35,15 @@ class TlsTest extends AnyFlatSpec with Matchers {
     testClientResumptionWithClient(addTlsWithSslClientConfigurationFromPems)
   }
 
-  it should "support session resumption with SslClientConfiguration and a caching ssl client engine factory" in {
-    testClientResumptionWithClient(addTlsWithSslClientConfigurationAndCachingSslClientEngineFactory)
+  it should "support session resumption with SslClientConfiguration and a cached Netty4ClientEngineFactory" in {
+    testClientResumptionWithClient(addTlsWithSslClientConfigurationAndCachedNetty4ClientEngineFactory)
+  }
+
+  it should "support session resumption with SslClientConfiguration and a SslContextEngineFactory" in {
+    testClientResumptionWithClient(addTlsWithSslClientConfigurationAndSslContextEngineFactory)
+  }
+  it should "support session resumption with SslClientConfiguration and a cached SslContextEngineFactory" in {
+    testClientResumptionWithClient(addTlsWithSslClientConfigurationAndCachedSslContextEngineFactory)
   }
 
   private def testClientResumptionWithClient(clientModifier: Client => Client): Unit = {
@@ -69,13 +77,16 @@ class TlsTest extends AnyFlatSpec with Matchers {
     // Connect
     val client = createClient(server, clientModifier.andThen(configureWithSessionTracker(sessionTracker)))
 
-    info("""###\n###First call\n###""")
+    info("###")
+    info("### First call")
     // make two calls
-    Await.result(client(Request()).liftToTry) //.headerMap should contain("Connection" -> "close")
+    info(Await.result(client(Request()).liftToTry, Duration.fromSeconds(1)).toString) //.headerMap should contain("Connection" -> "close")
 
-    info("""###\n###Second call\n###""")
+    info("###")
+    info("###Second call")
 
-    val res2 = Await.result(client(Request()).liftToTry) //.headerMap should contain("Connection" -> "close")
+    val res2 = Await.result(client(Request()).liftToTry, Duration.fromSeconds(1)) //.headerMap should contain("Connection" -> "close")
+    info(res2.toString)
 
     res2 shouldBe a [Return[_]]
     // Amount of verifications should be 2
@@ -122,7 +133,9 @@ class TlsTest extends AnyFlatSpec with Matchers {
     val clientConfiguration = SslClientConfiguration(
       Option.empty,
       KeyCredentials.Unspecified,
-      TrustCredentials.Insecure,
+      TrustCredentialsConfig.trustManagerFactory(
+        createTrustManagerFactory(getClass.getResourceAsStream("/trust.jks"), "changeme")
+      ),
       CipherSuites.Unspecified,
       Protocols.Unspecified,
       ApplicationProtocols.Unspecified
@@ -131,17 +144,45 @@ class TlsTest extends AnyFlatSpec with Matchers {
     _.withTransport.tls(clientConfiguration)
   }
 
-  val addTlsWithSslClientConfigurationAndCachingSslClientEngineFactory: Client => Client = {
+  val addTlsWithSslClientConfigurationAndCachedNetty4ClientEngineFactory: Client => Client = {
     val clientConfiguration = SslClientConfiguration(
       Option.empty,
       KeyCredentials.Unspecified,
-      TrustCredentials.Insecure,
+      TrustCredentialsConfig.trustManagerFactory(
+        createTrustManagerFactory(getClass.getResourceAsStream("/trust.jks"), "changeme")
+      ),
       CipherSuites.Unspecified,
       Protocols.Unspecified,
       ApplicationProtocols.Unspecified
     )
 
     _.withTransport.tls(clientConfiguration, new CachingSslClientEngineFactory(Netty4ClientEngineFactory.apply()))
+  }
+
+  val addTlsWithSslClientConfigurationAndSslContextEngineFactory: Client => Client = {
+    val clientConfiguration = SslClientConfiguration(
+      Option.empty,
+      KeyCredentials.Unspecified,
+      TrustCredentials.Unspecified,
+      CipherSuites.Unspecified,
+      Protocols.Unspecified,
+      ApplicationProtocols.Unspecified
+    )
+
+    _.withTransport.tls(clientConfiguration, new SslContextClientEngineFactory(createMutalTlsContext))
+  }
+
+  val addTlsWithSslClientConfigurationAndCachedSslContextEngineFactory: Client => Client = {
+    val clientConfiguration = SslClientConfiguration(
+      Option.empty,
+      KeyCredentials.Unspecified,
+      TrustCredentials.Unspecified,
+      CipherSuites.Unspecified,
+      Protocols.Unspecified,
+      ApplicationProtocols.Unspecified
+    )
+
+    _.withTransport.tls(clientConfiguration, new CachingSslClientEngineFactory(new SslContextClientEngineFactory(createMutalTlsContext)))
   }
 
   class CachingSslClientEngineFactory(underlying: SslClientEngineFactory) extends SslClientEngineFactory {
