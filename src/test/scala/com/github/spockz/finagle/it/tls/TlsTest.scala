@@ -1,8 +1,6 @@
-package com.ing.apisdk.toolkit.connectivity.transport.http
+package com.github.spockz.finagle.it.tls
 
-import java.io.InputStream
 import java.net.InetSocketAddress
-import java.security.KeyStore
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 
 import com.twitter.finagle
@@ -13,9 +11,10 @@ import com.twitter.finagle.ssl._
 import com.twitter.finagle.ssl.client.{SslClientConfiguration, SslClientEngineFactory, SslClientSessionVerifier, SslContextClientEngineFactory}
 import com.twitter.finagle.{Address, Http, ListeningServer, Service}
 import com.twitter.util.{Await, Duration, Future, Return}
-import javax.net.ssl.{KeyManagerFactory, SSLContext, SSLSession, TrustManagerFactory}
+import javax.net.ssl.SSLSession
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+import com.github.spockz.finagle.tls.TlsUtil.{createKeyManagerFactory, createMutualTlsContext, createTrustManagerFactory}
 
 import scala.collection.concurrent.TrieMap
 
@@ -198,57 +197,4 @@ class TlsTest extends AnyFlatSpec with Matchers {
     _.configured(SslClientSessionVerifier.Param(sessionVerifier))
 
 
-  def createMutualTlsContext(keyStore: InputStream,
-                             keyStoreType: String,
-                             keyStorePassphrase: String,
-                             privateKeyPassphrase: String,
-                             trustKeystore: InputStream,
-                             trustKeystorePassphrase: String): SSLContext = {
-    require(Option(keyStore).isDefined, "Client keystore must be defined")
-    require(Option(trustKeystore).isDefined, "Trust store must be defined")
-
-    val kmf: KeyManagerFactory =
-      createKeyManagerFactory(keyStore, keyStoreType, keyStorePassphrase, privateKeyPassphrase)
-
-    val tmf: TrustManagerFactory =
-      createTrustManagerFactory(trustKeystore, trustKeystorePassphrase)
-
-    val sslContext = SSLContext.getInstance("TLS")
-    sslContext.init(kmf.getKeyManagers, tmf.getTrustManagers, null)
-    sslContext
-  }
-
-  def createTrustManagerFactory(trustKeystore: InputStream, trustKeystorePassphrase: String): TrustManagerFactory = {
-    require(Option(trustKeystore).isDefined, "Trust store must be defined")
-
-    val trustKeystorePassphraseChars = trustKeystorePassphrase.toCharArray
-
-    val ksTrust = KeyStore.getInstance("JKS")
-    ksTrust.load(trustKeystore, trustKeystorePassphraseChars)
-
-    // TrustManagers decide whether to allow connections
-    val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm)
-    tmf.init(ksTrust)
-    tmf
-  }
-
-  def createKeyManagerFactory(keyStore: InputStream,
-                              keyStoreType: String,
-                              keyStorePassphrase: String,
-                              privateKeyPassphrase: String): KeyManagerFactory = {
-    require(Option(keyStore).isDefined, "Client keystore must be defined")
-
-    // Create and initialize the SSLContext with key material
-    val clientKeystorePassphraseChars = keyStorePassphrase.toCharArray
-    val clientKeyPassphraseChars = privateKeyPassphrase.toCharArray
-
-    // First initialize the key and trust material
-    val ksKeys = KeyStore.getInstance(keyStoreType)
-    ksKeys.load(keyStore, clientKeystorePassphraseChars)
-
-    // KeyManagers decide which key material to use
-    val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm)
-    kmf.init(ksKeys, clientKeyPassphraseChars)
-    kmf
-  }
 }
